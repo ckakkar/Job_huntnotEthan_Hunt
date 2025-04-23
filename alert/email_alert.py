@@ -101,7 +101,7 @@ class EmailAlert:
         <!DOCTYPE html>
         <html>
         <body>
-            <h1>Job Hunt Results - {datetime.now().strftime("%Y-%m-%d")}</h1>
+            <h1>Hi PUU - {datetime.now().strftime("%Y-%m-%d")}</h1>
             
             <div style="background-color: #f0f0f0; padding: 10px; margin: 10px 0;">
                 <p>Found <strong>{len(jobs_df)}</strong> new job postings matching your criteria!</p>
