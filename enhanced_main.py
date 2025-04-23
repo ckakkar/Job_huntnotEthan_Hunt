@@ -74,7 +74,7 @@ def get_driver():
         return None
 
 
-def run_job_search(keywords_list=None, location_str=None, recent_days=1):
+def run_job_search(keywords_list=None, location_str=None, recent_days=7):
     """
     Run the job search process with multiple methods and fallbacks.
     
@@ -95,6 +95,7 @@ def run_job_search(keywords_list=None, location_str=None, recent_days=1):
     
     display_progress(f"🔍 Searching for jobs with keywords: {keywords_str}")
     display_progress(f"📍 Location: {location_str}")
+    display_progress(f"⏰ Timeframe: Last {recent_days} days")
     
     # Initialize dataframe to store all jobs
     all_jobs = pd.DataFrame(columns=["title", "company", "location", "date", "link", "source"])
@@ -118,7 +119,9 @@ def run_job_search(keywords_list=None, location_str=None, recent_days=1):
         try:
             display_progress("🔍 Searching LinkedIn API...")
             linkedin_api = LinkedInAPI()
-            jobs_df = linkedin_api.search(keywords_str, location_str, time_period="24h" if recent_days <= 1 else "past-week")
+            # Use past-week time period for 7 days
+            time_period = "past-week" if recent_days >= 7 else "24h" if recent_days <= 1 else "past-week"
+            jobs_df = linkedin_api.search(keywords_str, location_str, time_period=time_period)
             if not jobs_df.empty:
                 all_jobs = pd.concat([all_jobs, jobs_df], ignore_index=True)
                 display_progress(f"✅ Found {len(jobs_df)} jobs from LinkedIn API")
@@ -149,7 +152,7 @@ def run_job_search(keywords_list=None, location_str=None, recent_days=1):
             try:
                 display_progress("🔍 Scraping Indeed with Selenium...")
                 scraper = IndeedScraper()
-                jobs_df = scraper.scrape(keywords_str, location_str)
+                jobs_df = scraper.scrape(keywords_str, location_str, days=recent_days)
                 if not jobs_df.empty:
                     all_jobs = pd.concat([all_jobs, jobs_df], ignore_index=True)
                     display_progress(f"✅ Found {len(jobs_df)} jobs from Indeed scraper")
@@ -161,7 +164,7 @@ def run_job_search(keywords_list=None, location_str=None, recent_days=1):
             try:
                 display_progress("🔍 Scraping Naukri...")
                 scraper = NaukriScraper()
-                jobs_df = scraper.scrape(keywords_str, location_str)
+                jobs_df = scraper.scrape(keywords_str, location_str, days=recent_days)
                 if not jobs_df.empty:
                     all_jobs = pd.concat([all_jobs, jobs_df], ignore_index=True)
                     display_progress(f"✅ Found {len(jobs_df)} jobs from Naukri")
@@ -174,7 +177,7 @@ def run_job_search(keywords_list=None, location_str=None, recent_days=1):
             try:
                 display_progress("🔍 Scraping Foundit...")
                 scraper = FounditScraper()
-                jobs_df = scraper.scrape(keywords_str, location_str)
+                jobs_df = scraper.scrape(keywords_str, location_str, days=recent_days)
                 if not jobs_df.empty:
                     all_jobs = pd.concat([all_jobs, jobs_df], ignore_index=True)
                     display_progress(f"✅ Found {len(jobs_df)} jobs from Foundit")
@@ -217,15 +220,18 @@ def run_job_search(keywords_list=None, location_str=None, recent_days=1):
         # Sites to scrape with OpenAI - prioritize those not already scraped
         openai_sites = [
             # Standard job boards not already scraped
-            {"name": "Naukri", "url": "https://www.naukri.com/jobs-in-{location}?keywordsearch={keywords}&experience=0&jobAge=1"},
-            {"name": "Foundit", "url": "https://www.foundit.in/srp/results?keyword={keywords}&location={location}&sort=0&postDate=1"},
-            {"name": "LinkedIn", "url": "https://www.linkedin.com/jobs/search/?keywords={keywords}&location={location}&f_TPR=r24"},
+            {"name": "Naukri", "url": f"https://www.naukri.com/jobs-in-{{location}}?keywordsearch={{keywords}}&experience=0&jobAge={recent_days}"},
+            {"name": "Foundit", "url": f"https://www.foundit.in/srp/results?keyword={{keywords}}&location={{location}}&sort=0&postDate={recent_days}"},
+            {"name": "LinkedIn", "url": "https://www.linkedin.com/jobs/search/?keywords={keywords}&location={location}&f_TPR=r604800"},
             {"name": "TimesJobs", "url": "https://www.timesjobs.com/candidate/job-search.html?searchType=personalizedSearch&from=submit&txtKeywords={keywords}&txtLocation={location}"},
             
             # Company career pages not already scraped
             {"name": "JPMorgan", "url": "https://jpmc.fa.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_1001/requisitions?location=Bengaluru"},
             {"name": "Goldman Sachs", "url": "https://www.goldmansachs.com/careers/professionals/positions-for-experienced-professionals.html?city=Bengaluru"},
-            {"name": "State Street", "url": "https://statestreet.wd1.myworkdayjobs.com/en-US/Global/jobs?locations=be03a623dbe601d38a65c3391d4d1970"}
+            {"name": "State Street", "url": "https://statestreet.wd1.myworkdayjobs.com/en-US/Global/jobs?locations=be03a623dbe601d38a65c3391d4d1970"},
+            # Additional sites for Bangalore
+            {"name": "Shine", "url": "https://www.shine.com/job-search/jobs-in-bangalore"},
+            {"name": "SimplyHired", "url": "https://www.simplyhired.co.in/search?q={keywords}&l=Bangalore"}
         ]
         
         for site in openai_sites:
@@ -290,7 +296,7 @@ def main():
     try:
         # Display startup banner
         print("\n" + "="*70)
-        print("🚀 Enhanced Job Hunter - All Jobs Posted in the Last 24 Hours")
+        print("🚀 Enhanced Job Hunter - Jobs Posted in the Last 7 Days")
         print("="*70 + "\n")
         
         # Check if .env file exists
@@ -299,7 +305,7 @@ def main():
             sys.exit(1)
         
         # Search for jobs
-        jobs_df = run_job_search(recent_days=1)  # Get jobs from last 24 hours
+        jobs_df = run_job_search(recent_days=7)  # Get jobs from last 7 days
         
         # Send alerts if jobs were found
         if not jobs_df.empty:

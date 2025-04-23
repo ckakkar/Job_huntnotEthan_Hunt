@@ -17,15 +17,15 @@ class NaukriScraper(BaseScraper):
         """Initialize the Naukri scraper."""
         super().__init__("Naukri")
     
-    def build_url(self, keywords, location):
+    def build_url(self, keywords, location, days=7):
         """Build the URL for Naukri job search."""
         encoded_keywords = urllib.parse.quote_plus(keywords)
         encoded_location = urllib.parse.quote_plus(location)
-        return f"https://www.naukri.com/jobs-in-{encoded_location}?keywordsearch={encoded_keywords}&experience=0&nignbevent_src=jobsearchDesk&jobAge=1"
+        return f"https://www.naukri.com/jobs-in-{encoded_location}?keywordsearch={encoded_keywords}&experience=0&nignbevent_src=jobsearchDesk&jobAge={days}"
     
-    def scrape(self, keywords, location, max_jobs=MAX_JOBS_PER_SOURCE):
+    def scrape(self, keywords, location, max_jobs=MAX_JOBS_PER_SOURCE, days=7):
         """Scrape Naukri for jobs matching the keywords and location."""
-        url = self.build_url(keywords, location)
+        url = self.build_url(keywords, location, days)
         
         # Naukri requires Selenium due to its dynamic content
         driver = self.setup_selenium()
@@ -46,7 +46,7 @@ class NaukriScraper(BaseScraper):
                 print("Timeout waiting for Naukri jobs to load")
             
             # Scroll down to load more results (Naukri uses lazy loading)
-            for _ in range(2):  # Scroll a few times to load more jobs
+            for _ in range(3):  # Scroll a few times to load more jobs
                 driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
                 time.sleep(1)
             
@@ -69,9 +69,9 @@ class NaukriScraper(BaseScraper):
                     location = location_elem.text.strip()
                     
                     # Try to find the date from various elements
-                    date = "Today"
+                    date = "Within last 7 days"
                     try:
-                        date_elem = job.find_element(By.CSS_SELECTOR, ".jobAge, .exp")
+                        date_elem = job.find_element(By.CSS_SELECTOR, ".jobAge, .exp, .newText")
                         date_text = date_elem.text.strip()
                         if date_text:
                             date = date_text
@@ -82,7 +82,20 @@ class NaukriScraper(BaseScraper):
                     try:
                         link_elem = job.find_element(By.CSS_SELECTOR, ".title a, a")
                         link = link_elem.get_attribute("href")
+                        
+                        # Ensure the link is valid and points to a job
+                        if not link or not (link.startswith("http") or link.startswith("https")):
+                            # Try fallback method
+                            try:
+                                job_link_container = job.find_element(By.CSS_SELECTOR, ".jobTupleHeader")
+                                link = job_link_container.find_element(By.TAG_NAME, "a").get_attribute("href")
+                            except:
+                                link = ""
                     except NoSuchElementException:
+                        link = ""
+                    
+                    # If link is still empty, use the search URL
+                    if not link:
                         link = url
                     
                     self.add_job(title, company, location, date, link)

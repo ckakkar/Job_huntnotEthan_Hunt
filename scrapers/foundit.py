@@ -17,15 +17,15 @@ class FounditScraper(BaseScraper):
         """Initialize the Foundit scraper."""
         super().__init__("Foundit")
     
-    def build_url(self, keywords, location):
+    def build_url(self, keywords, location, days=7):
         """Build the URL for Foundit job search."""
         encoded_keywords = urllib.parse.quote_plus(keywords)
         encoded_location = urllib.parse.quote_plus(location)
-        return f"https://www.foundit.in/srp/results?keyword={encoded_keywords}&location={encoded_location}&sort=0&flow=default&experienceMin=0&experienceMax=30&postDate=1"
+        return f"https://www.foundit.in/srp/results?keyword={encoded_keywords}&location={encoded_location}&sort=0&flow=default&experienceMin=0&experienceMax=30&postDate={days}"
     
-    def scrape(self, keywords, location, max_jobs=MAX_JOBS_PER_SOURCE):
+    def scrape(self, keywords, location, max_jobs=MAX_JOBS_PER_SOURCE, days=7):
         """Scrape Foundit for jobs matching the keywords and location."""
-        url = self.build_url(keywords, location)
+        url = self.build_url(keywords, location, days)
         
         # Foundit requires Selenium due to its dynamic content
         driver = self.setup_selenium()
@@ -46,7 +46,7 @@ class FounditScraper(BaseScraper):
                 print("Timeout waiting for Foundit jobs to load")
             
             # Scroll down to load more results
-            for _ in range(2):  # Scroll a few times to load more jobs
+            for _ in range(3):  # Scroll a few times to load more jobs
                 driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
                 time.sleep(1)
             
@@ -65,7 +65,7 @@ class FounditScraper(BaseScraper):
                     location = location_elem.text.strip()
                     
                     # Get the date if available
-                    date = "Recently posted"
+                    date = "Within last 7 days"
                     try:
                         date_elem = job.find_element(By.CSS_SELECTOR, ".posted-update span, .posted-date")
                         date = date_elem.text.strip()
@@ -74,6 +74,15 @@ class FounditScraper(BaseScraper):
                     
                     # Get the job link
                     link = title_elem.get_attribute("href")
+                    
+                    # Ensure we have a valid link
+                    if not link or not (link.startswith("http") or link.startswith("https")):
+                        # Try alternate method to find link
+                        try:
+                            link_elem = job.find_element(By.CSS_SELECTOR, "a[href*='job-detail']")
+                            link = link_elem.get_attribute("href")
+                        except:
+                            link = ""
                     
                     self.add_job(title, company, location, date, link)
                     job_count += 1

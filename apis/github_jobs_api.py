@@ -26,7 +26,7 @@ class GitHubJobsAPI:
             "Accept": "application/json"
         }
     
-    def search(self, keywords, location, days=1, max_jobs=MAX_JOBS_PER_SOURCE):
+    def search(self, keywords, location, days=7, max_jobs=MAX_JOBS_PER_SOURCE):
         """
         Search for jobs on GitHub Jobs.
         
@@ -73,13 +73,22 @@ class GitHubJobsAPI:
                     if job_date < cutoff_date:
                         continue
                     
+                    # Format the date to be more readable
+                    days_ago = (datetime.now() - job_date).days
+                    if days_ago == 0:
+                        formatted_date = "Today"
+                    elif days_ago == 1:
+                        formatted_date = "Yesterday"
+                    else:
+                        formatted_date = f"{days_ago} days ago"
+                    
                     self.jobs_df = pd.concat([
                         self.jobs_df,
                         pd.DataFrame({
                             "title": [job.get("title", "")],
                             "company": [job.get("company", "")],
                             "location": [job.get("location", "")],
-                            "date": [date_str],
+                            "date": [formatted_date],
                             "link": [job.get("url", "")],
                             "source": [self.name]
                         })

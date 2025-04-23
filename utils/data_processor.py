@@ -68,11 +68,11 @@ def parse_date_string(date_str):
     # Convert to string if not already
     date_str = str(date_str).lower().strip()
     
-    # Get current time in UTC
-    now = datetime.now(pytz.UTC)
+    # Get current time (without timezone info)
+    now = datetime.now()
     
     # Check for common patterns
-    if date_str in ['today', 'just now', 'now', 'few minutes ago']:
+    if date_str in ['today', 'just now', 'now', 'few minutes ago', 'recently posted']:
         return now
     
     if 'minute' in date_str or 'minutes' in date_str:
@@ -99,6 +99,9 @@ def parse_date_string(date_str):
         weeks = re.search(r'(\d+)', date_str)
         if weeks:
             return now - timedelta(weeks=int(weeks.group(1)))
+    
+    if date_str in ['within last 7 days', 'past week', 'recent', 'posted recently']:
+        return now - timedelta(days=3)  # Assume middle of the week
     
     if 'month' in date_str or 'months' in date_str:
         months = re.search(r'(\d+)', date_str)
@@ -128,7 +131,7 @@ def parse_date_string(date_str):
     return None
 
 
-def filter_recent_jobs(jobs_df, days=1):
+def filter_recent_jobs(jobs_df, days=7):
     """
     Filter jobs that were posted in the specified number of days.
     
@@ -142,17 +145,19 @@ def filter_recent_jobs(jobs_df, days=1):
     if jobs_df.empty:
         return jobs_df
     
-    # List of strings that indicate recent jobs
+    # List of strings that indicate recent jobs within specified days
     recent_indicators = [
         'today', 'just now', 'few hours ago', 'hour ago',
         'hours ago', 'yesterday', '1 day ago', 'recent',
-        'moments ago', 'just posted', 'new', 'posted today'
+        'moments ago', 'just posted', 'new', 'posted today',
+        'within last 7 days', 'recently posted', 'past week'
     ]
     
     # Compile regex patterns for common time formats
     hour_pattern = re.compile(r'\d+\s*h(ou)?r')
     minute_pattern = re.compile(r'\d+\s*min(ute)?')
     day_pattern = re.compile(r'(\d+)\s*d(ay)?')
+    week_pattern = re.compile(r'(\d+)\s*week')
     
     # First, try to filter using text patterns
     mask1 = jobs_df['date'].str.lower().apply(
@@ -160,20 +165,33 @@ def filter_recent_jobs(jobs_df, days=1):
                      hour_pattern.search(date.lower()) is not None or
                      minute_pattern.search(date.lower()) is not None or
                      (day_pattern.search(date.lower()) is not None and 
-                      int(day_pattern.search(date.lower()).group(1)) <= days)
+                      int(day_pattern.search(date.lower()).group(1)) <= days) or
+                     (week_pattern.search(date.lower()) is not None and
+                      int(week_pattern.search(date.lower()).group(1)) <= 1)
     )
     
     # Second, try to parse dates and filter by days ago
     cutoff_date = datetime.now() - timedelta(days=days)
     
-    mask2 = jobs_df['date'].apply(
-        lambda date_str: 
-            parse_date_string(date_str) is not None and 
-            parse_date_string(date_str) >= cutoff_date
-    )
+    # Use a function that safely checks if a date is recent without timezone issues
+    def is_recent_date(date_str):
+        parsed_date = parse_date_string(date_str)
+        if parsed_date is None:
+            return False
+        
+        # Now ensure we're comparing naive datetimes
+        return parsed_date >= cutoff_date
+    
+    mask2 = jobs_df['date'].apply(is_recent_date)
     
     # Combine both filters with OR
     mask = mask1 | mask2
+    
+    # As a fallback, if we've filtered out all jobs, return all jobs
+    # This allows for jobs with hard-to-parse dates to still be included
+    if mask.sum() == 0:
+        print("Warning: Date filtering removed all jobs. Returning all jobs.")
+        return jobs_df
     
     return jobs_df[mask].reset_index(drop=True)
 
@@ -229,6 +247,8 @@ def sort_jobs_by_date(jobs_df):
                 days = int(match.group(1))
                 return 500 - days
             return 400
+        if 'week' in date_str.lower() or 'within last 7 days' in date_str.lower():
+            return 300
         return 0
     
     # Add recency score and sort
@@ -238,7 +258,52 @@ def sort_jobs_by_date(jobs_df):
     return sorted_df.reset_index(drop=True)
 
 
-def process_jobs(jobs_df, keywords=None, locations=None, recent_days=1, sort_by_date=True):
+def enrich_job_data(jobs_df):
+    """
+    Enrich job listings with additional information.
+    
+    Args:
+        jobs_df (pd.DataFrame): DataFrame containing job listings.
+    
+    Returns:
+        pd.DataFrame: Enriched DataFrame.
+    """
+    if jobs_df.empty:
+        return jobs_df
+    
+    # Make sure all links are valid
+    jobs_df['link'] = jobs_df['link'].apply(
+        lambda link: link if link and (link.startswith('http://') or link.startswith('https://')) 
+                   else ""
+    )
+    
+    # Fix any empty links by generating fallback links
+    def generate_fallback_link(row):
+        if not row['link'] or len(row['link']) < 10:
+            company = row['company'].replace(' ', '+')
+            title = row['title'].replace(' ', '+')
+            location = row['location'].replace(' ', '+')
+            source = row['source']
+            
+            if source == 'Indeed':
+                return f"https://in.indeed.com/jobs?q={title}+{company}&l={location}"
+            elif source == 'Naukri':
+                return f"https://www.naukri.com/jobs-in-{location}?keywordsearch={title}"
+            elif source == 'LinkedIn':
+                return f"https://www.linkedin.com/jobs/search/?keywords={title}&location={location}"
+            elif source == 'Foundit':
+                return f"https://www.foundit.in/srp/results?keyword={title}&location={location}"
+            else:
+                return f"https://www.google.com/search?q={title}+{company}+jobs+in+{location}"
+        else:
+            return row['link']
+            
+    jobs_df['link'] = jobs_df.apply(generate_fallback_link, axis=1)
+    
+    return jobs_df
+
+
+def process_jobs(jobs_df, keywords=None, locations=None, recent_days=7, sort_by_date=True):
     """
     Process job listings: filter by keywords, locations, recent only, and remove duplicates.
     
@@ -271,6 +336,9 @@ def process_jobs(jobs_df, keywords=None, locations=None, recent_days=1, sort_by_
     
     # Remove duplicates
     processed_df = remove_duplicates(processed_df)
+    
+    # Enrich job data
+    processed_df = enrich_job_data(processed_df)
     
     # Sort by date if requested
     if sort_by_date:

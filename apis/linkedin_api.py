@@ -37,7 +37,7 @@ class LinkedInAPI:
             "Sec-Fetch-User": "?1"
         }
     
-    def build_url(self, keywords, location, time_period="24h"):
+    def build_url(self, keywords, location, time_period="past-week"):
         """
         Build the URL for LinkedIn job search.
         
@@ -52,7 +52,7 @@ class LinkedInAPI:
         encoded_keywords = quote_plus(keywords)
         encoded_location = quote_plus(location)
         
-        # f_TPR=r24 means jobs posted in the last 24 hours
+        # r604800 = past week (7 days)
         time_filter = "r24" if time_period == "24h" else "r604800" if time_period == "past-week" else ""
         time_param = f"&f_TPR={time_filter}" if time_filter else ""
         
@@ -131,7 +131,7 @@ class LinkedInAPI:
         for job in job_cards:
             try:
                 # Title and link
-                title_elem = job.select_one(".base-search-card__title, .job-search-card__title, .base-card__full-link")
+                title_elem = job.select_one(".base-search-card__title, .job-search-card__title, .base-card__full-link, .job-card-container__link")
                 if not title_elem:
                     continue
                 
@@ -155,9 +155,26 @@ class LinkedInAPI:
                 location_elem = job.select_one(".job-search-card__location, span.job-search-card__location, .base-card__metadata span.job-search-card__location")
                 location = location_elem.text.strip() if location_elem else "Remote/Unspecified"
                 
-                # Date
+                # Date - look for a time element
                 date_elem = job.select_one("time, .job-search-card__listdate, .base-card__metadata time")
-                date = date_elem.text.strip() if date_elem else "Recent"
+                date = date_elem.text.strip() if date_elem else "Within 7 days"
+                
+                # If there is no visible date, try to get it from attributes
+                if not date or date == "Within 7 days":
+                    if date_elem and date_elem.has_attr("datetime"):
+                        date = "Within 7 days"  # Fallback if we can't parse the date
+                
+                # Ensure we have a link - if not, try to build one
+                if not link and "linkedin.com" in self.base_url:
+                    job_id = job.get("data-id", "")
+                    if job_id:
+                        link = f"https://www.linkedin.com/jobs/view/{job_id}/"
+                    else:
+                        # Try to extract ID from job card
+                        job_id_match = re.search(r'data-job-id=["\']([^"\']+)["\']', str(job))
+                        if job_id_match:
+                            job_id = job_id_match.group(1)
+                            link = f"https://www.linkedin.com/jobs/view/{job_id}/"
                 
                 jobs.append({
                     "title": title,
@@ -185,7 +202,7 @@ class LinkedInAPI:
                     title = title_elem.text.strip() if title_elem else ""
                     company = company_elem.text.strip() if company_elem else "Unknown Company"
                     location = location_elem.text.strip() if location_elem else "Remote/Unspecified"
-                    date = date_elem.text.strip() if date_elem else "Recent"
+                    date = date_elem.text.strip() if date_elem else "Within 7 days"
                     
                     link = f"https://www.linkedin.com/jobs/view/{job_id}/" if job_id else ""
                     
@@ -202,7 +219,7 @@ class LinkedInAPI:
         
         return jobs
     
-    def search(self, keywords, location, time_period="24h", max_pages=3, max_jobs=MAX_JOBS_PER_SOURCE):
+    def search(self, keywords, location, time_period="past-week", max_pages=3, max_jobs=MAX_JOBS_PER_SOURCE):
         """
         Search for jobs on LinkedIn.
         

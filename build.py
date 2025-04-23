@@ -172,6 +172,7 @@ Run it in Terminal:
 The app will:
 - Search for jobs on Indeed, Naukri, Foundit, LinkedIn and company career pages
 - Filter based on configured keywords and locations
+- Searches for jobs posted in the last 7 days
 - Send an email with the results
 
 ## Troubleshooting

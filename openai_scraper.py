@@ -71,8 +71,22 @@ class OpenAIScraper:
             max_chars = 4000
             text = text[:max_chars]
             
-            # Simple prompt
-            prompt = f"Extract job listings from this webpage text as a JSON array. Each job should have title, company, location, date, and link fields. Keep it minimal.\n\nText: {text}"
+            # Enhanced prompt for better extraction
+            prompt = f"""
+            Extract job listings from this webpage text as a JSON array of job objects. 
+            Each job object should have the following fields:
+            - title: The job title
+            - company: The company name
+            - location: The job location
+            - date: When the job was posted (if available)
+            - link: The URL to the job listing (if available)
+            
+            Focus on finding jobs in Bangalore/Bengaluru posted within the last 7 days.
+            Format the response as a valid JSON array. Only include jobs from the webpage text.
+            
+            Webpage Text:
+            {text}
+            """
             
             # Call OpenAI API
             response = requests.post(
@@ -88,7 +102,7 @@ class OpenAIScraper:
                         {"role": "user", "content": prompt}
                     ],
                     "temperature": 0.1,
-                    "max_tokens": 1000
+                    "max_tokens": 1500
                 }
             )
             
@@ -160,7 +174,7 @@ class OpenAIScraper:
             pd.DataFrame: DataFrame containing the scraped job listings
         """
         url = self.build_url(keywords, location)
-        print(f"Scraping {self.name}...")
+        print(f"Scraping {self.name} using OpenAI...")
         
         try:
             # Request webpage
@@ -185,13 +199,22 @@ class OpenAIScraper:
                     title = str(job.get("title", ""))
                     company = str(job.get("company", ""))
                     job_location = str(job.get("location", location))
-                    date = str(job.get("date", "Recent"))
+                    date = str(job.get("date", "Within 7 days"))
                     link = str(job.get("link", ""))
+                    
+                    # Skip non-Bangalore jobs (except Remote)
+                    if not any(loc.lower() in job_location.lower() for loc in 
+                               ["bangalore", "bengaluru", "remote", "hybrid"]):
+                        continue
                     
                     # Process link if needed
                     if link and not link.startswith(("http://", "https://")):
                         base_url = "/".join(url.split("/")[:3])
                         link = f"{base_url}{link if link.startswith('/') else '/' + link}"
+                    
+                    # Default date if missing
+                    if not date or date.lower() == "none" or date.lower() == "n/a":
+                        date = "Recently posted"
                     
                     # Add to dataframe
                     job_data = pd.DataFrame({

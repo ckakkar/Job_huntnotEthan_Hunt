@@ -37,7 +37,7 @@ class IndeedAPI:
             "Sec-Fetch-User": "?1"
         }
     
-    def build_url(self, keywords, location, days=1):
+    def build_url(self, keywords, location, days=7):
         """
         Build the URL for Indeed job search.
         
@@ -52,7 +52,7 @@ class IndeedAPI:
         encoded_keywords = quote_plus(keywords)
         encoded_location = quote_plus(location)
         
-        # fromage=1 means jobs posted in the last day
+        # fromage=7 means jobs posted in the last 7 days
         return f"{self.search_url}?q={encoded_keywords}&l={encoded_location}&fromage={days}&sort=date"
     
     def extract_structured_data(self, html):
@@ -120,7 +120,7 @@ class IndeedAPI:
             return structured_jobs
         
         # Try various selectors for job cards
-        job_cards = soup.select("div.job_seen_beacon, div.jobsearch-ResultsList div[data-jk], div.mosaic-provider-jobcards div[data-jk]")
+        job_cards = soup.select("div.job_seen_beacon, div.jobsearch-ResultsList div[data-jk], div.mosaic-provider-jobcards div[data-jk], div[class*='job_seen_beacon']")
         
         for job in job_cards:
             try:
@@ -128,36 +128,49 @@ class IndeedAPI:
                 job_id = job.get("data-jk") or job.get("id", "").replace("job_", "")
                 
                 # Extract title
-                title_elem = job.select_one("h2.jobTitle span, h2.jobTitle a, a.jobtitle, h2 a")
+                title_elem = job.select_one("h2.jobTitle span, h2.jobTitle a, a.jobtitle, h2 a, h2[class*='jobTitle'] span, h2[class*='jobTitle'] a")
                 if not title_elem:
                     continue
                     
                 title = title_elem.text.strip()
                 
                 # Extract company
-                company_elem = job.select_one("span.companyName, span.company, .companyInfo>span:first-child")
+                company_elem = job.select_one("span.companyName, span.company, .companyInfo>span:first-child, [data-testid='company-name']")
                 company = company_elem.text.strip() if company_elem else "Unknown Company"
                 
                 # Extract location
-                location_elem = job.select_one("div.companyLocation, .location, .outcome, span.location")
+                location_elem = job.select_one("div.companyLocation, .location, .outcome, span.location, [data-testid='text-location']")
                 location = location_elem.text.strip() if location_elem else "Remote/Unspecified"
                 
                 # Extract date
-                date_elem = job.select_one("span.date, span.date-min, .date, .result-link-bar .date")
-                date = date_elem.text.strip() if date_elem else "Recently posted"
+                date_elem = job.select_one("span.date, span.date-min, .date, .result-link-bar .date, [class*='date']")
+                date = date_elem.text.strip() if date_elem else "Within 7 days"
                 
                 # Extract link
                 link = ""
                 if job_id:
                     link = f"https://in.indeed.com/viewjob?jk={job_id}"
                 else:
-                    link_elem = job.select_one("a[href*='/rc/clk'], a[href*='viewjob'], h2 a, a.jobtitle")
+                    link_elem = job.select_one("a[href*='/rc/clk'], a[href*='viewjob'], h2 a, a.jobtitle, a[data-jk]")
                     if link_elem and link_elem.has_attr("href"):
                         href = link_elem["href"]
                         if href.startswith("/"):
                             link = f"https://in.indeed.com{href}"
                         else:
                             link = href
+                
+                # If still no link, try another method
+                if not link:
+                    # Try to find any link that might point to the job
+                    all_links = job.select("a[href]")
+                    for a_tag in all_links:
+                        href = a_tag.get('href', '')
+                        if "viewjob" in href or "jk=" in href:
+                            if href.startswith("/"):
+                                link = f"https://in.indeed.com{href}"
+                            else:
+                                link = href
+                            break
                 
                 jobs.append({
                     "title": title,
@@ -172,7 +185,7 @@ class IndeedAPI:
         
         return jobs
     
-    def search(self, keywords, location, days=1, max_pages=3, max_jobs=MAX_JOBS_PER_SOURCE):
+    def search(self, keywords, location, days=7, max_pages=3, max_jobs=MAX_JOBS_PER_SOURCE):
         """
         Search for jobs on Indeed.
         

@@ -4,7 +4,13 @@ Simple script to run JobHunter directly
 """
 import os
 import sys
-import subprocess
+
+# Add the project directory to the Python path
+# This ensures imports in the project work correctly
+script_dir = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, script_dir)
+
+import traceback
 from datetime import datetime
 
 def check_environment():
@@ -39,18 +45,23 @@ def run_job_hunter():
     if not check_environment():
         sys.exit(1)
     
-    print("=" * 50)
+    print("=" * 70)
     print(f"🚀 Running JobHunter on {datetime.now().strftime('%Y-%m-%d at %H:%M:%S')}")
-    print("=" * 50)
+    print("🔍 Searching for jobs posted in the last 7 days in Bangalore")
+    print("=" * 70)
     
     try:
-        # Use the enhanced main script
-        subprocess.check_call([sys.executable, 'enhanced_main.py'])
-        print("=" * 50)
+        # Import and run enhanced_main directly instead of using subprocess
+        # This ensures proper module resolution
+        import enhanced_main
+        enhanced_main.main()
+        
+        print("=" * 70)
         print("✅ JobHunter completed successfully!")
-        print("=" * 50)
-    except subprocess.CalledProcessError as e:
+        print("=" * 70)
+    except Exception as e:
         print(f"❌ Error running JobHunter: {e}")
+        traceback.print_exc()  # Print full traceback for better debugging
         sys.exit(1)
     except KeyboardInterrupt:
         print("\n🛑 JobHunter interrupted by user")

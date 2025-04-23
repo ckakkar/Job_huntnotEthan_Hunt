@@ -14,15 +14,15 @@ class IndeedScraper(BaseScraper):
         """Initialize the Indeed scraper."""
         super().__init__("Indeed")
     
-    def build_url(self, keywords, location):
+    def build_url(self, keywords, location, days=7):
         """Build the URL for Indeed job search."""
         encoded_keywords = urllib.parse.quote_plus(keywords)
         encoded_location = urllib.parse.quote_plus(location)
-        return f"https://in.indeed.com/jobs?q={encoded_keywords}&l={encoded_location}&fromage=1"
+        return f"https://in.indeed.com/jobs?q={encoded_keywords}&l={encoded_location}&fromage={days}"
     
-    def scrape(self, keywords, location, max_jobs=MAX_JOBS_PER_SOURCE):
+    def scrape(self, keywords, location, max_jobs=MAX_JOBS_PER_SOURCE, days=7):
         """Scrape Indeed for jobs matching the keywords and location."""
-        url = self.build_url(keywords, location)
+        url = self.build_url(keywords, location, days)
         html = self.make_request(url)
         
         if not html:
