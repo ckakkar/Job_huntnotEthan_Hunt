@@ -4,6 +4,8 @@ from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
 import pandas as pd
 from datetime import datetime
+import re
+import urllib.parse
 
 from config.credentials import EMAIL
 
@@ -81,10 +83,38 @@ class EmailAlert:
         Returns:
             str: Valid link or search fallback
         """
-        if not link or len(link) < 10 or not (link.startswith('http://') or link.startswith('https://')):
-            # Generate a generic search link as fallback
-            return "https://www.google.com/search?q=jobs+in+bangalore"
+        # Make sure the link is a string
+        link = str(link).strip()
+        
+        # Check if link is empty or too short
+        if not link or len(link) < 5:
+            return self._generate_search_link("jobs in bangalore")
+        
+        # Fix common issues with links
+        if not link.startswith(('http://', 'https://')):
+            if link.startswith('www.'):
+                link = 'https://' + link
+            else:
+                # Try to extract a domain if present
+                domain_match = re.search(r'([a-zA-Z0-9][-a-zA-Z0-9]*\.)+[a-zA-Z0-9][-a-zA-Z0-9]*', link)
+                if domain_match:
+                    domain = domain_match.group(0)
+                    link = 'https://' + domain
+                else:
+                    # No valid domain found
+                    return self._generate_search_link(link)
+        
+        # Check for common placeholder links that need to be avoided
+        invalid_domains = ['example.com', 'example.org', 'test.com', 'localhost']
+        if any(invalid in link.lower() for invalid in invalid_domains):
+            return self._generate_search_link("job openings in bangalore")
+        
         return link
+    
+    def _generate_search_link(self, query):
+        """Generate a Google search link with the provided query."""
+        encoded_query = urllib.parse.quote_plus(query)
+        return f"https://www.google.com/search?q={encoded_query}"
     
     def _format_email_body(self, jobs_df):
         """
@@ -96,14 +126,36 @@ class EmailAlert:
         Returns:
             str: Formatted email body as HTML.
         """
-        # Create extremely simple HTML without complex CSS
+        # Create HTML with proper styling
         html = f"""
         <!DOCTYPE html>
         <html>
+        <head>
+            <style>
+                body {{ font-family: Arial, sans-serif; line-height: 1.6; color: #333; }}
+                .job-card {{ border: 1px solid #ccc; padding: 15px; margin-bottom: 15px; border-radius: 8px; background-color: #f9f9f9; }}
+                .job-title {{ color: #2c5282; margin-top: 0; margin-bottom: 10px; font-size: 18px; }}
+                .job-company {{ font-weight: bold; margin: 5px 0; color: #444; }}
+                .job-details {{ color: #555; margin: 5px 0; }}
+                .job-link {{ 
+                    display: inline-block;
+                    background-color: #3366cc; 
+                    color: white !important; 
+                    padding: 8px 15px; 
+                    text-decoration: none !important; 
+                    border-radius: 4px; 
+                    margin-top: 10px;
+                    font-weight: bold;
+                }}
+                .header {{ background-color: #f0f0f0; padding: 15px; margin: 10px 0; border-radius: 8px; }}
+                .section-heading {{ color: #3366cc; margin-top: 25px; border-bottom: 1px solid #eee; padding-bottom: 5px; }}
+                .debug-info {{ font-size: 10px; color: #999; margin-top: 3px; }}
+            </style>
+        </head>
         <body>
             <h1>Hi PUU - {datetime.now().strftime("%Y-%m-%d")}</h1>
             
-            <div style="background-color: #f0f0f0; padding: 10px; margin: 10px 0;">
+            <div class="header">
                 <p>Found <strong>{len(jobs_df)}</strong> new job postings matching your criteria!</p>
                 <p>Looking for jobs posted in the last 7 days</p>
             </div>
@@ -114,20 +166,23 @@ class EmailAlert:
         
         # Loop through each source
         for source, group in grouped:
-            html += f'<h2 style="color: #3366cc;">{source} ({len(group)} jobs)</h2>'
+            html += f'<h2 class="section-heading">{source} ({len(group)} jobs)</h2>'
             
             # Loop through each job in the group
             for i, (_, job) in enumerate(group.iterrows(), 1):
+                # Get original link for debugging
+                original_link = job['link'] if 'link' in job else "No link provided"
+                
                 # Ensure link is valid
-                link = self._validate_link(job['link'])
+                link = self._validate_link(original_link)
                 
                 html += f"""
-                <div style="border: 1px solid #ccc; padding: 10px; margin-bottom: 10px;">
-                    <h3>{i}. {job['title']}</h3>
-                    <p><strong>{job['company']}</strong></p>
-                    <p>📍 {job['location']}</p>
-                    <p>⏰ Posted: {job['date']}</p>
-                    <a href="{link}" target="_blank" style="background-color: #3366cc; color: white; padding: 5px 10px; text-decoration: none;">View Job</a>
+                <div class="job-card">
+                    <h3 class="job-title">{i}. {job['title']}</h3>
+                    <p class="job-company">{job['company']}</p>
+                    <p class="job-details">📍 {job['location']}</p>
+                    <p class="job-details">⏰ Posted: {job['date']}</p>
+                    <a href="{link}" target="_blank" class="job-link">View Job</a>
                 </div>
                 """
         

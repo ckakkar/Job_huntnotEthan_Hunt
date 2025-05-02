@@ -24,8 +24,43 @@ def filter_jobs_by_keywords(jobs_df, keywords):
     
     # Check if any keyword is in the job title
     mask = jobs_df['title'].str.lower().apply(
-        lambda title: any(keyword in title for keyword in keywords_lower)
+        lambda title: any(keyword in title.lower() for keyword in keywords_lower)
     )
+    
+    # If filtering removes all jobs, return the original DataFrame
+    if not mask.any():
+        print("Warning: Keyword filtering removed all jobs. Returning all jobs.")
+        return jobs_df
+    
+    return jobs_df[mask].reset_index(drop=True)
+
+
+def filter_jobs_by_title_keywords(jobs_df, title_keywords):
+    """
+    Filter jobs by keywords in the job title.
+    
+    Args:
+        jobs_df (pd.DataFrame): DataFrame containing job listings.
+        title_keywords (list): List of keywords to filter by in the title.
+    
+    Returns:
+        pd.DataFrame: Filtered DataFrame.
+    """
+    if jobs_df.empty:
+        return jobs_df
+    
+    # Convert keywords to lowercase for case-insensitive matching
+    keywords_lower = [k.lower() for k in title_keywords]
+    
+    # Check if any keyword is in the job title
+    mask = jobs_df['title'].str.lower().apply(
+        lambda title: any(keyword in title.lower() for keyword in keywords_lower)
+    )
+    
+    # If we have too few matches (less than 10 or less than 25% of original), return original
+    if mask.sum() < 10 or mask.sum() < len(jobs_df) * 0.25:
+        print(f"Warning: Title keyword filtering kept only {mask.sum()} of {len(jobs_df)} jobs. Returning all jobs.")
+        return jobs_df
     
     return jobs_df[mask].reset_index(drop=True)
 
@@ -47,10 +82,31 @@ def filter_jobs_by_location(jobs_df, locations):
     # Convert locations to lowercase for case-insensitive matching
     locations_lower = [l.lower() for l in locations]
     
+    # Add remote/hybrid to locations if not already included
+    if not any('remote' in loc for loc in locations_lower):
+        locations_lower.append('remote')
+    if not any('hybrid' in loc for loc in locations_lower):
+        locations_lower.append('hybrid')
+    
     # Check if any location is in the job location
     mask = jobs_df['location'].str.lower().apply(
-        lambda loc: any(location in loc for location in locations_lower)
+        lambda loc: any(location in loc.lower() for location in locations_lower)
     )
+    
+    # If filtering removes too many jobs, be more lenient
+    if mask.sum() < 10 and len(jobs_df) > 10:
+        print("Warning: Strict location filtering removed too many jobs. Using more lenient filtering.")
+        # More lenient approach - just check for Bangalore/Bengaluru or Remote
+        mask = jobs_df['location'].str.lower().apply(
+            lambda loc: 'bangalore' in loc.lower() or 'bengaluru' in loc.lower() or 
+                        'remote' in loc.lower() or 'hybrid' in loc.lower() or 
+                        'anywhere' in loc.lower() or 'india' in loc.lower()
+        )
+    
+    # If still too strict, return all jobs
+    if mask.sum() < 5 and len(jobs_df) > 10:
+        print("Warning: Location filtering removed too many jobs. Returning all jobs.")
+        return jobs_df
     
     return jobs_df[mask].reset_index(drop=True)
 
@@ -134,6 +190,7 @@ def parse_date_string(date_str):
 def filter_recent_jobs(jobs_df, days=7):
     """
     Filter jobs that were posted in the specified number of days.
+    More lenient to avoid filtering out too many jobs.
     
     Args:
         jobs_df (pd.DataFrame): DataFrame containing job listings.
@@ -145,12 +202,13 @@ def filter_recent_jobs(jobs_df, days=7):
     if jobs_df.empty:
         return jobs_df
     
-    # List of strings that indicate recent jobs within specified days
+    # List of strings that indicate recent jobs
     recent_indicators = [
         'today', 'just now', 'few hours ago', 'hour ago',
         'hours ago', 'yesterday', '1 day ago', 'recent',
         'moments ago', 'just posted', 'new', 'posted today',
-        'within last 7 days', 'recently posted', 'past week'
+        'within last 7 days', 'recently posted', 'past week',
+        'few days ago', 'this week'
     ]
     
     # Compile regex patterns for common time formats
@@ -161,23 +219,37 @@ def filter_recent_jobs(jobs_df, days=7):
     
     # First, try to filter using text patterns
     mask1 = jobs_df['date'].str.lower().apply(
-        lambda date: any(indicator in date for indicator in recent_indicators) or
+        lambda date: any(indicator in date.lower() for indicator in recent_indicators) or
                      hour_pattern.search(date.lower()) is not None or
                      minute_pattern.search(date.lower()) is not None or
                      (day_pattern.search(date.lower()) is not None and 
-                      int(day_pattern.search(date.lower()).group(1)) <= days) or
+                      int(day_pattern.search(date.lower()).group(1)) <= max(days, 30)) or
                      (week_pattern.search(date.lower()) is not None and
-                      int(week_pattern.search(date.lower()).group(1)) <= 1)
+                      int(week_pattern.search(date.lower()).group(1)) <= max(days // 7, 4))
     )
     
+    # If filtering is too strict, be more lenient with days
+    if mask1.sum() < len(jobs_df) * 0.3 and days <= 7:
+        # For 7-day searches, allow up to 30 days
+        extended_days = 30
+        mask1 = jobs_df['date'].str.lower().apply(
+            lambda date: any(indicator in date.lower() for indicator in recent_indicators) or
+                        hour_pattern.search(date.lower()) is not None or
+                        minute_pattern.search(date.lower()) is not None or
+                        (day_pattern.search(date.lower()) is not None and 
+                        int(day_pattern.search(date.lower()).group(1)) <= extended_days) or
+                        (week_pattern.search(date.lower()) is not None and
+                        int(week_pattern.search(date.lower()).group(1)) <= (extended_days // 7))
+        )
+    
     # Second, try to parse dates and filter by days ago
-    cutoff_date = datetime.now() - timedelta(days=days)
+    cutoff_date = datetime.now() - timedelta(days=max(days, 30))  # Be lenient with date filtering
     
     # Use a function that safely checks if a date is recent without timezone issues
     def is_recent_date(date_str):
         parsed_date = parse_date_string(date_str)
         if parsed_date is None:
-            return False
+            return True  # If we can't parse, assume it's recent
         
         # Now ensure we're comparing naive datetimes
         return parsed_date >= cutoff_date
@@ -187,10 +259,9 @@ def filter_recent_jobs(jobs_df, days=7):
     # Combine both filters with OR
     mask = mask1 | mask2
     
-    # As a fallback, if we've filtered out all jobs, return all jobs
-    # This allows for jobs with hard-to-parse dates to still be included
-    if mask.sum() == 0:
-        print("Warning: Date filtering removed all jobs. Returning all jobs.")
+    # As a fallback, if we've filtered out too many jobs, return all jobs
+    if mask.sum() < 10 and len(jobs_df) > 15:
+        print(f"Warning: Date filtering kept only {mask.sum()} of {len(jobs_df)} jobs. Returning all jobs.")
         return jobs_df
     
     return jobs_df[mask].reset_index(drop=True)
@@ -209,8 +280,17 @@ def remove_duplicates(jobs_df):
     if jobs_df.empty:
         return jobs_df
     
-    # Drop duplicates based on title and company
-    return jobs_df.drop_duplicates(subset=['title', 'company']).reset_index(drop=True)
+    # Clean titles and companies for better matching
+    jobs_df['clean_title'] = jobs_df['title'].str.lower().apply(lambda x: re.sub(r'[^\w\s]', '', x))
+    jobs_df['clean_company'] = jobs_df['company'].str.lower().apply(lambda x: re.sub(r'[^\w\s]', '', x))
+    
+    # Drop duplicates based on clean title and company
+    deduplicated_df = jobs_df.drop_duplicates(subset=['clean_title', 'clean_company']).reset_index(drop=True)
+    
+    # Remove the temporary columns
+    deduplicated_df = deduplicated_df.drop(['clean_title', 'clean_company'], axis=1)
+    
+    return deduplicated_df
 
 
 def sort_jobs_by_date(jobs_df):
@@ -300,12 +380,23 @@ def enrich_job_data(jobs_df):
             
     jobs_df['link'] = jobs_df.apply(generate_fallback_link, axis=1)
     
+    # Clean up company names
+    jobs_df['company'] = jobs_df['company'].apply(
+        lambda company: re.sub(r'\(.*?\)', '', company).strip()  # Remove parenthesis content
+    )
+    
+    # Clean up location names
+    jobs_df['location'] = jobs_df['location'].apply(
+        lambda location: location.replace(',', ', ').strip()  # Add space after commas
+    )
+    
     return jobs_df
 
 
 def process_jobs(jobs_df, keywords=None, locations=None, recent_days=7, sort_by_date=True):
     """
     Process job listings: filter by keywords, locations, recent only, and remove duplicates.
+    Less aggressive filtering to ensure we don't lose too many results.
     
     Args:
         jobs_df (pd.DataFrame): DataFrame containing job listings.
@@ -323,22 +414,36 @@ def process_jobs(jobs_df, keywords=None, locations=None, recent_days=7, sort_by_
     # Make a copy to avoid modifying the original
     processed_df = jobs_df.copy()
     
-    # Filter by keywords if provided
-    if keywords and len(keywords) > 0:
-        processed_df = filter_jobs_by_keywords(processed_df, keywords)
+    # Fill missing values
+    processed_df['location'] = processed_df['location'].fillna('Bangalore')
+    processed_df['date'] = processed_df['date'].fillna('Recent')
+    processed_df['company'] = processed_df['company'].fillna('Unknown')
     
-    # Filter by locations if provided
-    if locations and len(locations) > 0:
-        processed_df = filter_jobs_by_location(processed_df, locations)
+    # Remove any rows with empty titles
+    processed_df = processed_df[processed_df['title'].notna() & (processed_df['title'] != '')].reset_index(drop=True)
     
-    # Filter for recent jobs
-    processed_df = filter_recent_jobs(processed_df, days=recent_days)
+    # Enrich job data
+    processed_df = enrich_job_data(processed_df)
     
     # Remove duplicates
     processed_df = remove_duplicates(processed_df)
     
-    # Enrich job data
-    processed_df = enrich_job_data(processed_df)
+    # Filter by keywords if provided - but only if we have enough jobs
+    if keywords and len(keywords) > 0 and len(processed_df) >= 20:
+        keyword_filtered = filter_jobs_by_keywords(processed_df, keywords)
+        # Only apply the filter if it doesn't remove too many jobs
+        if len(keyword_filtered) >= max(10, len(processed_df) * 0.3):
+            processed_df = keyword_filtered
+    
+    # Filter by locations if provided - but only if we have enough jobs
+    if locations and len(locations) > 0 and len(processed_df) >= 15:
+        location_filtered = filter_jobs_by_location(processed_df, locations)
+        # Only apply the filter if it doesn't remove too many jobs
+        if len(location_filtered) >= max(10, len(processed_df) * 0.3):
+            processed_df = location_filtered
+    
+    # Filter for recent jobs - using extended timeframe
+    processed_df = filter_recent_jobs(processed_df, days=recent_days)
     
     # Sort by date if requested
     if sort_by_date:
